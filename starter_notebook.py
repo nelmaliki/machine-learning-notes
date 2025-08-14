@@ -12,12 +12,16 @@
 #   "ruff==0.12.8",
 #   "pyarrow==21.0.0",
 #   "anthropic==0.62.0",
+#   "transformers==4.55.0",
+#   "torch==2.8.0",
+#   "torchvision==0.23.0",
+#   "watchdog==6.0.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.14.16"
+__generated_with = "0.14.17"
 app = marimo.App(width="full")
 
 
@@ -343,12 +347,12 @@ def _(keras, keras_nlp, strategy):
     # Load a BERT model.
 
     with strategy.scope():
-        classifier = keras_nlp.models.BertClassifier.from_preset(
+        classifier_base = keras_nlp.models.BertClassifier.from_preset(
             "bert_base_multi", num_classes=3
         )
 
         # in distributed training, the recommendation is to scale batch size and learning rate with the numer of workers.
-        classifier.compile(
+        classifier_base.compile(
             optimizer=keras.optimizers.Adam(
                 1e-5 * strategy.num_replicas_in_sync
             ),
@@ -356,8 +360,8 @@ def _(keras, keras_nlp, strategy):
             metrics=["accuracy"],
         )
 
-        classifier.summary()
-    return (classifier,)
+        classifier_base.summary()
+    return (classifier_base,)
 
 
 @app.cell(hide_code=True)
@@ -367,12 +371,28 @@ def _(mo):
 
 
 @app.cell
-def _(classifier, train_preprocessed, val_preprocessed):
+def _(
+    classifier_base,
+    keras_nlp,
+    os,
+    tf,
+    train_preprocessed,
+    val_preprocessed,
+):
     EPOCHS = 3
-    history = classifier.fit(
-            train_preprocessed, epochs=EPOCHS, validation_data=val_preprocessed
-    )
-    return
+    model_path = 'classifier_model.h5'
+
+    classifier = None
+    if os.path.exists(model_path):
+        classifier = tf.keras.models.load_model(model_path, custom_objects={'BertTextClassifier': keras_nlp.models.BertClassifier})
+        history = None
+    else:
+        history = classifier_base.fit(
+                train_preprocessed, epochs=EPOCHS, validation_data=val_preprocessed
+        )
+        classifier_base.save(model_path)
+        classifier = classifier_base
+    return (classifier,)
 
 
 @app.cell(hide_code=True)
@@ -413,18 +433,150 @@ def _(BATCH_SIZE, classifier, df_train):
 
 
 @app.cell
-def _(df_train, np, test_train_predictions):
+def _(df_train, np, plt, sns, test_train_predictions):
     df_train["prediction"] = np.argmax(test_train_predictions, axis=1)
     incorrect_answers = df_train.query("prediction != label")[["id", "premise", "hypothesis", "language", "prediction", "label"]].copy()
-    incorrect_answers
+    (_f_inc, _ax_inc) = plt.subplots(figsize=(10, 10))
+    sns.set_color_codes("pastel")
+    sns.despine()
+    _ax_inc = sns.countplot(
+        data=incorrect_answers,
+        y="language",
+        order=incorrect_answers["language"].value_counts().index,
+    )
+    _abs_values_inc = incorrect_answers["language"].value_counts(ascending=False)
+    _rel_values_inc = (
+        incorrect_answers["language"]
+        .value_counts(ascending=False, normalize=True)
+        .values * 100
+    )
+    _lbls_inc = [f"{p[0]} ({p[1]:.0f}%)" for p in zip(_abs_values_inc, _rel_values_inc)]
+    _ax_inc.bar_label(container=_ax_inc.containers[0], labels=_lbls_inc)
+    _ax_inc.set_title("Distribution of languages among incorrect answers")
+
+    return (incorrect_answers,)
 
 
+@app.cell
+def _(df_train, incorrect_answers, plt, sns):
+
+    # Calculate failure rates by language
+    _total_by_lang = df_train["language"].value_counts()
+    _incorrect_by_lang = incorrect_answers["language"].value_counts()
+    _failure_rates = (_incorrect_by_lang / _total_by_lang * 100).fillna(0).sort_values(ascending=True)
+
+    (_f_fail, _ax_fail) = plt.subplots(figsize=(10, 8))
+    sns.set_color_codes("muted")
+    sns.despine()
+    _bars = _ax_fail.barh(range(len(_failure_rates)), _failure_rates.values)
+    _ax_fail.set_yticks(range(len(_failure_rates)))
+    _ax_fail.set_yticklabels(_failure_rates.index)
+    _ax_fail.set_xlabel("Failure Rate (%)")
+    _ax_fail.set_title("Failure Rate by Language")
+
+    # Add labels showing the failure rate percentage
+    for i, (_lang, _rate) in enumerate(_failure_rates.items()):
+        _ax_fail.text(_rate + 0.5, i, f"{_rate:.1f}%", va='center')
+
+    plt.gca()
     return
 
 
 @app.cell
 def _(submission):
     submission.to_csv("submission.csv", index=False)
+    return
+
+
+@app.cell
+def _():
+    #Try with Qwen3
+    return
+
+
+@app.cell
+def _(os):
+    import sys, importlib, transformers
+    from transformers.utils import import_utils
+    import torch, inspect
+    print("py:", sys.executable)
+    print("TRANSFORMERS_NO_TORCH =", os.environ.get("TRANSFORMERS_NO_TORCH"))
+    print("TRANSFORMERS_NO_TF    =", os.environ.get("TRANSFORMERS_NO_TF"))
+    print("is_torch_available():", import_utils.is_torch_available())
+    print("transformers.__file__:", transformers.__file__)
+
+
+    print("torch:", torch.__version__, "->", torch.__file__)
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model_name = "Qwen/Qwen3-0.6B"
+
+    # load the tokenizer and the model
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype="auto",
+        device_map="auto"
+    )
+    return model, tokenizer
+
+
+@app.cell
+def _(df_test, model, tokenizer):
+        # prepare the model input
+    prompt = """Your goal is to predict whether a given hypothesis is related to its premise by contradiction, entailment, or whether neither of those is true (neutral).
+    For each sample in the test set, you must predict a 0, 1, or 2 value for the variable.
+    Those values map to the logical condition as:
+    0 == entailment
+    1 == neutral
+    2 == contradiction
+
+    The next message will contain the premise and associated hypothesis"""
+
+    def callLLM(message: str):
+        messages = [
+            {"role": "user", "content": prompt},
+            {"role": "user", "content": message}
+        ]
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True # Switches between thinking and non-thinking modes. Default is True.
+        )
+        model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
+
+        # conduct text completion
+        generated_ids = model.generate(
+            **model_inputs,
+            max_new_tokens=32768
+        )
+        output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist() 
+
+        # parsing thinking content
+        try:
+            # rindex finding 151668 (</think>)
+            index = len(output_ids) - output_ids[::-1].index(151668)
+        except ValueError:
+            index = 0
+
+        thinking_content = tokenizer.decode(output_ids[:index], skip_special_tokens=True).strip("\n")
+        content = tokenizer.decode(output_ids[index:], skip_special_tokens=True).strip("\n")
+        return [thinking_content, content]
+
+    results = []
+    for idx, row in df_test.iterrows():
+        premise = row["premise"]
+        hypo = row["hypothesis"]
+        thinking_content, content = callLLM(f"Premise: {premise}\nHypothesis: {hypo}")
+        results.append({"id": idx, "prediction": content})
+    return (results,)
+
+
+@app.cell
+def _(pd, results):
+    df_results = pd.DataFrame(results)
+    df_results.to_csv("qwen_submission.csv", index=False)
     return
 
 

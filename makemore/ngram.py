@@ -85,69 +85,86 @@ def _(mo):
 
 @app.cell
 def _(ngram_size):
-    import matplotlib.pyplot as plt
     import torch
+
     # Copy some code from the previous example
     # import and initialize packages
     num_preceding_chars = ngram_size.value
     names = open("names.txt", "r").read().splitlines()
 
     separator = "."
-    chars = ([separator] + sorted(list(set("".join(names)))))  # create a set of every character, turn it into a list and use the index of each character in that list as its unique integer
+    chars = (
+        [separator] + sorted(list(set("".join(names))))
+    )  # create a set of every character, turn it into a list and use the index of each character in that list as its unique integer
 
     # create a lookup table from character to index
     char_lookup = {char: index for index, char in enumerate(chars)}
-    #unlike the video, input_labels is now a list of tuples of characters
+    # unlike the video, input_labels is now a list of tuples of characters
     input_labels, output_labels = [], []
     for _n in names:
-        _characters = ([separator] * num_preceding_chars) + list(_n) + [separator]
+        _characters = (
+            ([separator] * num_preceding_chars) + list(_n) + [separator]
+        )
         for _i in range(num_preceding_chars, len(_characters)):
-            _inputs = tuple([char_lookup[x] for x in _characters[_i-num_preceding_chars:_i]])
+            _inputs = tuple(
+                [
+                    char_lookup[x]
+                    for x in _characters[_i - num_preceding_chars : _i]
+                ]
+            )
             _output = char_lookup[_characters[_i]]
-            input_labels.append( _inputs)
+            input_labels.append(_inputs)
             output_labels.append(_output)
-    #print((["".join([chars[x] for x in xs]) for xs in input_labels]))
-    return input_labels, output_labels, torch
+    # print((["".join([chars[x] for x in xs]) for xs in input_labels]))
+    return chars, input_labels, output_labels, torch
 
 
 @app.cell
 def _(input_labels):
-    #unlike before, our input into the model is a list of characters. 
-    #We could try Binary Encoding but we're still going to do hot encoding
-    #maybe add Binary Encoding later to compare
-    import torch.nn.functional as F
+    # unlike before, our input into the model is a list of characters.
+    # We could try Binary Encoding but we're still going to do hot encoding
+    # maybe add Binary Encoding later to compare
 
     all_char_pairs = list(set(input_labels))
     char_pair_lookup = {t: index for index, t in enumerate(all_char_pairs)}
-    return F, all_char_pairs, char_pair_lookup
+    return all_char_pairs, char_pair_lookup
 
 
 @app.cell
-def _(F, all_char_pairs, char_pair_lookup, input_labels, output_labels, torch):
-    #Now setup a tensor where each combination of n characters is represented by a single value in the hot encoding
+def _(char_pair_lookup, input_labels, output_labels, torch):
+    def get_device():
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        # On Apple Silicon (M1/M2/M3...), check MPS
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+
+    device = get_device()
+    # Now setup a tensor where each combination of n characters is represented by a single value in the hot encoding
     unified_input_label = [char_pair_lookup[t] for t in input_labels]
-    input_labels_tensor = torch.tensor(unified_input_label)
-    output_labels_tensor = torch.tensor(output_labels)
-
-    encoded_input_labels = F.one_hot(
-            input_labels_tensor, num_classes=len(all_char_pairs)
-        ).float()
-    return input_labels_tensor, output_labels_tensor
+    input_labels_tensor = torch.tensor(unified_input_label, device=device)
+    output_labels_tensor = torch.tensor(output_labels, device=device)
+    return device, input_labels_tensor, output_labels_tensor
 
 
 @app.cell
-def _(F, all_char_pairs, torch):
+def _(all_char_pairs, device, torch):
     num_classes = len(all_char_pairs)
+
     def forward_pass(input: torch.tensor, network: torch.tensor):
-        encoded = F.one_hot(input, num_classes=num_classes).float()
-        logits = encoded @ network
+        # encoded = F.one_hot(input, num_classes=num_classes).float()
+        # logits = encoded @ network
+        logits = network[input]
         logcount = logits.exp()
         probs = logcount / logcount.sum(1, keepdim=True)
         return probs
 
     def eval_loss(input, output, network):
         probs = forward_pass(input, network)
-        return -probs[torch.arange(len(input)), output].log().mean()
+        return (
+            -probs[torch.arange(len(input), device=device), output].log().mean()
+        )
 
     def backward_pass(input, output, network):
         network.grad = None
@@ -156,22 +173,67 @@ def _(F, all_char_pairs, torch):
         return
 
     def update(input, output, network, learning_rate):
-        #side affects network.grad
+        # side affects network.grad
         backward_pass(input, output, network)
         network.data += learning_rate * network.grad
         return
 
-    return eval_loss, update
+    return eval_loss, forward_pass, num_classes
 
 
 @app.cell
-def _(eval_loss, input_labels_tensor, output_labels_tensor, torch, update):
-    g = torch.Generator().manual_seed(2147483647)
-    W = torch.randn((27, 27), generator=g, requires_grad=True)
-    for _i in range(1):
-        update(input_labels_tensor, output_labels_tensor, W, -1)
-    #What are we expecting? About the same loss that we got with the other bigram: 2.45ish
-    print(f"loss after 5 runs {eval_loss(input_labels_tensor, output_labels_tensor, W)}")
+def _(
+    chars,
+    device,
+    eval_loss,
+    forward_pass,
+    input_labels_tensor,
+    num_classes,
+    output_labels_tensor,
+    torch,
+):
+    g = torch.Generator(device=device).manual_seed(2147483647)
+    W = torch.randn(
+        (num_classes, len(chars)),
+        generator=g,
+        requires_grad=True,
+        device=device,
+    )
+
+    def experiment():
+        loss_data = []
+        for _i in range(100):
+            W.grad = None
+            probs = forward_pass(input_labels_tensor, W)
+            loss = (
+                -probs[
+                    torch.arange(len(input_labels_tensor), device=device),
+                    output_labels_tensor,
+                ]
+                .log()
+                .mean()
+            )
+            loss_data.append(loss.item())
+            loss.backward()
+            W.data += -10 * W.grad
+
+        return loss_data
+
+    loss_data = experiment()
+    # What are we expecting? About the same loss that we got with the other bigram: 2.45ish
+    print(
+        f"loss after 50000 runs {eval_loss(input_labels_tensor, output_labels_tensor, W)}"
+    )
+    return (loss_data,)
+
+
+@app.cell
+def _(loss_data):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ax.plot([i for i in range(len(loss_data))], loss_data)
+    plt.show()
     return
 
 

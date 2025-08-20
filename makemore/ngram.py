@@ -49,7 +49,7 @@ def _(mo):
     # N-gram size slider (how many characters to look at to predict the next one)
     ngram_size = mo.ui.slider(
         start=1,
-        stop=4,
+        stop=8,
         value=3,
         label="Number of chars to predict next char. 1 = bigram, 2 = trigram, etc",
         show_value=True,
@@ -80,7 +80,7 @@ def _(mo):
     {regularization_strength}
     """)
 
-    return (ngram_size,)
+    return ngram_size, use_cross_entropy
 
 
 @app.cell
@@ -106,16 +106,11 @@ def _(ngram_size):
             ([separator] * num_preceding_chars) + list(_n) + [separator]
         )
         for _i in range(num_preceding_chars, len(_characters)):
-            _inputs = tuple(
-                [
-                    char_lookup[x]
-                    for x in _characters[_i - num_preceding_chars : _i]
-                ]
-            )
+            _inputs = tuple([char_lookup[x] for x in _characters[_i - num_preceding_chars : _i]])
             _output = char_lookup[_characters[_i]]
             input_labels.append(_inputs)
             output_labels.append(_output)
-    # print((["".join([chars[x] for x in xs]) for xs in input_labels]))
+
     return chars, input_labels, output_labels, torch
 
 
@@ -132,6 +127,7 @@ def _(input_labels):
 
 @app.cell
 def _(char_pair_lookup, input_labels, output_labels, torch):
+    #Speeds up some of the operations especially when ngram_size is high
     def get_device():
         if torch.cuda.is_available():
             return torch.device("cuda")
@@ -149,49 +145,16 @@ def _(char_pair_lookup, input_labels, output_labels, torch):
 
 
 @app.cell
-def _(all_char_pairs, device, torch):
-    num_classes = len(all_char_pairs)
-
-    def forward_pass(input: torch.tensor, network: torch.tensor):
-        # encoded = F.one_hot(input, num_classes=num_classes).float()
-        # logits = encoded @ network
-        logits = network[input]
-        logcount = logits.exp()
-        probs = logcount / logcount.sum(1, keepdim=True)
-        return probs
-
-    def eval_loss(input, output, network):
-        probs = forward_pass(input, network)
-        return (
-            -probs[torch.arange(len(input), device=device), output].log().mean()
-        )
-
-    def backward_pass(input, output, network):
-        network.grad = None
-        loss = eval_loss(input, output, network)
-        loss.backward()
-        return
-
-    def update(input, output, network, learning_rate):
-        # side affects network.grad
-        backward_pass(input, output, network)
-        network.data += learning_rate * network.grad
-        return
-
-    return eval_loss, forward_pass, num_classes
-
-
-@app.cell
 def _(
+    all_char_pairs,
     chars,
     device,
-    eval_loss,
-    forward_pass,
     input_labels_tensor,
-    num_classes,
     output_labels_tensor,
     torch,
+    use_cross_entropy,
 ):
+    num_classes = len(all_char_pairs)
     g = torch.Generator(device=device).manual_seed(2147483647)
     W = torch.randn(
         (num_classes, len(chars)),
@@ -199,32 +162,26 @@ def _(
         requires_grad=True,
         device=device,
     )
-
+    import torch.nn.functional as F
     def experiment():
         loss_data = []
         for _i in range(100):
             W.grad = None
-            probs = forward_pass(input_labels_tensor, W)
-            loss = (
-                -probs[
-                    torch.arange(len(input_labels_tensor), device=device),
-                    output_labels_tensor,
-                ]
-                .log()
-                .mean()
-            )
+            logits = W[input_labels_tensor]
+            logcount = logits.exp()
+            probs = logcount / logcount.sum(1, keepdim=True)
+            if(use_cross_entropy.value):
+                loss = F.cross_entropy(logits, output_labels_tensor)
+            else:
+                loss = (-probs[torch.arange(len(input_labels_tensor), device=device),output_labels_tensor,].log().mean())
             loss_data.append(loss.item())
             loss.backward()
-            W.data += -10 * W.grad
+            W.data += -100 * W.grad
 
         return loss_data
 
     loss_data = experiment()
-    # What are we expecting? About the same loss that we got with the other bigram: 2.45ish
-    print(
-        f"loss after 50000 runs {eval_loss(input_labels_tensor, output_labels_tensor, W)}"
-    )
-    return (loss_data,)
+    return W, g, loss_data
 
 
 @app.cell
@@ -234,6 +191,26 @@ def _(loss_data):
     fig, ax = plt.subplots()
     ax.plot([i for i in range(len(loss_data))], loss_data)
     plt.show()
+    return
+
+
+@app.cell
+def _(W, chars, g, torch):
+    def sample():
+        _out = []
+        _index = 0
+        while True:
+            #_xenc = F.one_hot(torch.tensor([_index]), num_classes=27).float()
+            _logits = W[_index]
+            _log_count = _logits.exp()
+            _prob = _log_count / _log_count.sum()
+            _out_index = torch.multinomial(_prob, num_samples=1, replacement=True, generator=g).item()
+            _index = _out_index
+            if(_index == 0):
+                break
+            _out += chars[_index]
+        return _out
+    "".join(sample())
     return
 
 

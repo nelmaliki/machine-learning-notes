@@ -41,6 +41,7 @@ def _(mo):
         value=3,
         label="Number of chars to predict next char. 1 = bigram, 2 = trigram, etc",
         show_value=True,
+        include_input=True,
     )
 
     # Checkbox to enable cross-entropy loss
@@ -56,6 +57,7 @@ def _(mo):
         value=0.01,
         label="Regularization/smoothing strength",
         show_value=True,
+        include_input=True,
     )
 
     # Amount of Training Iterations
@@ -66,6 +68,7 @@ def _(mo):
         value=100,
         label="Number of Training Iterations",
         show_value=True,
+        include_input=True,
     )
 
     test_train_split = mo.ui.slider(
@@ -73,8 +76,9 @@ def _(mo):
         stop=1.0,
         step=0.05,
         value=0.2,
-        label="% of data to withold for testing",
+        label="Ratio of data to withold for testing",
         show_value=True,
+        include_input=True,
     )
 
     mo.md(f"""
@@ -252,7 +256,7 @@ def _(
 
     print(f"Final Training Loss: {final_training_loss:.4f}")
     print(f"Test Loss: {test_loss:.4f}")
-    return W, g, loss_data, final_training_loss, test_loss
+    return W, final_training_loss, g, loss_data, test_loss
 
 
 @app.cell(hide_code=True)
@@ -264,7 +268,10 @@ def _(final_training_loss, loss_data, test_loss):
 
     # Plot training loss over time
     ax1.plot(
-        [i for i in range(len(loss_data))], loss_data, linewidth=2, color="blue"
+        [i for i in range(len(loss_data))],
+        loss_data,
+        linewidth=2,
+        color="#6B73FF",
     )
     ax1.set_xlabel("Training Iteration")
     ax1.set_ylabel("Loss")
@@ -274,7 +281,7 @@ def _(final_training_loss, loss_data, test_loss):
     # Plot training vs test loss comparison
     losses = [final_training_loss, test_loss]
     labels = ["Training Loss", "Test Loss"]
-    colors = ["blue", "red"]
+    colors = ["#9B59B6", "#E67E22"]
 
     bars = ax2.bar(labels, losses, color=colors, alpha=0.7)
     ax2.set_ylabel("Loss")

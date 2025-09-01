@@ -198,6 +198,7 @@ def _(F, char_lookup, chars, device, names, separator, torch):
                 )
 
         return _train_losses, _test_loss
+
     return (train_model,)
 
 
@@ -475,7 +476,7 @@ def _(mo):
         """
     ## 4. Training Iterations Analysis Across N-gram Sizes
 
-    Number of iterations obviously relies on how many characters ahead we look. It appears that even the 5+ gram models taper off between 10^3 and 10^4 iterations. All models greater than 1-gram seem to converge to around 2.4 or 2.5 training loss.  
+    Number of iterations obviously relies on how many characters ahead we look. It appears that even the 5+ gram models taper off between 10^3 and 10^4 iterations. All models greater than 1-gram seem to converge to around 2.4 or 2.5 training loss.
     """
     )
     return

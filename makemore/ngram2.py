@@ -8,7 +8,7 @@
 
 import marimo
 
-__generated_with = "0.15.0"
+__generated_with = "0.15.2"
 app = marimo.App(width="full")
 
 
@@ -22,6 +22,8 @@ def _():
 
         This notebook explores how different parameters affect the performance of an n-gram language model.
         We'll systematically vary each parameter and visualize its impact on training and test loss.
+
+        Disclaimer: This was originally intended to be an interactive application to run in your browser. But due to limitations involving running torch in WASM, this has become a static notebook. I used Claude to rewrite the interactive code into a linear static notebook. The original interactive notebook can be found here: https://github.com/nelmaliki/machine-learning-notes/blob/main/makemore/ngram.py
 
         Based on [Andrej Karpathy's makemore video](https://www.youtube.com/watch?v=PaCmpygFfXo&t=382s)
         """
@@ -76,8 +78,6 @@ def _(F, char_lookup, chars, device, names, separator, torch):
         return _input_labels, _output_labels
 
     def train_model(
-        input_labels,
-        output_labels,
         num_preceding_chars,
         iterations=100,
         use_cross_entropy=False,
@@ -185,19 +185,27 @@ def _(F, char_lookup, chars, device, names, separator, torch):
 
         return _train_losses, _test_loss
 
-    return create_dataset, train_model
+    return (train_model,)
 
 
 @app.cell(hide_code=True)
-def _(mo, np, plt, train_model):
-    mo.md("## 1. Effect of N-gram Size")
+def _(mo):
+    mo.md("""
+    ## 1. Effect of N-gram Size
 
+    **Finding**: Larger n-grams (looking at more context) generally achieve lower loss, but with diminishing returns after 4-5 characters.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np, plt, train_model):
     ngram_sizes = range(1, 7)
     ngram_train_losses = []
     ngram_test_losses = []
 
     for _n in ngram_sizes:
-        _train_loss, _test_loss = train_model([], [], _n, iterations=200)
+        _train_loss, _test_loss = train_model(_n, iterations=200)
         ngram_train_losses.append(_train_loss[-1])
         ngram_test_losses.append(_test_loss)
         print(
@@ -259,49 +267,42 @@ def _(mo, np, plt, train_model):
 
     plt.tight_layout()
     plt.show()
-    return ngram_sizes, ngram_test_losses, ngram_train_losses
+    return
 
 
 @app.cell(hide_code=True)
-def _(mo, plt, train_model):
-    mo.md("## 2. Cross-Entropy vs Standard Loss")
+def _(mo):
+    mo.md("""
+    ## 2. Cross-Entropy vs Negative Log Likelihood
 
-    loss_types = ["Standard", "Cross-Entropy"]
+     Because we're using of one hot encoding, Cross Entropy is the same as Negative Log Likelihood.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(plt, train_model):
+    loss_types = ["Negative Log Likelihood", "Cross-Entropy"]
     train_losses_std, test_loss_std = train_model(
-        [], [], 3, iterations=200, use_cross_entropy=False
+        3, iterations=200, use_cross_entropy=False
     )
     train_losses_ce, test_loss_ce = train_model(
-        [], [], 3, iterations=200, use_cross_entropy=True
+        3, iterations=200, use_cross_entropy=True
     )
 
-    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(14, 5))
-
-    _ax1.plot(
-        train_losses_std, label="Standard Loss", linewidth=2, color="#9b59b6"
-    )
-    _ax1.plot(
-        train_losses_ce,
-        label="Cross-Entropy Loss",
-        linewidth=2,
-        color="#1abc9c",
-    )
-    _ax1.set_xlabel("Training Iteration")
-    _ax1.set_ylabel("Training Loss")
-    _ax1.set_title("Training Curves: Standard vs Cross-Entropy Loss")
-    _ax1.legend()
-    _ax1.grid(True, alpha=0.3)
+    _fig, _ax = plt.subplots(1, 1, figsize=(8, 5))
 
     _losses = [test_loss_std, test_loss_ce]
-    _bars = _ax2.bar(
+    _bars = _ax.bar(
         loss_types, _losses, color=["#9b59b6", "#1abc9c"], alpha=0.8
     )
-    _ax2.set_ylabel("Test Loss")
-    _ax2.set_title("Test Loss Comparison")
-    _ax2.grid(True, alpha=0.3, axis="y")
+    _ax.set_ylabel("Test Loss")
+    _ax.set_title("Test Loss Comparison")
+    _ax.grid(True, alpha=0.3, axis="y")
 
     for _bar, _loss in zip(_bars, _losses):
         _height = _bar.get_height()
-        _ax2.text(
+        _ax.text(
             _bar.get_x() + _bar.get_width() / 2.0,
             _height,
             f"{_loss:.4f}",
@@ -313,31 +314,33 @@ def _(mo, plt, train_model):
     plt.show()
 
     print(
-        f"Standard Loss - Final Train: {train_losses_std[-1]:.4f}, Test: {test_loss_std:.4f}"
+        f"Negative Log Likelihood - Final Train: {train_losses_std[-1]:.4f}, Test: {test_loss_std:.4f}"
     )
     print(
         f"Cross-Entropy - Final Train: {train_losses_ce[-1]:.4f}, Test: {test_loss_ce:.4f}"
     )
-    return (
-        loss_types,
-        test_loss_ce,
-        test_loss_std,
-        train_losses_ce,
-        train_losses_std,
-    )
+    return
 
 
 @app.cell(hide_code=True)
-def _(mo, np, plt, train_model):
-    mo.md("## 3. Effect of Regularization Strength")
+def _(mo):
+    mo.md("""
+    ## 3. Effect of Regularization Strength
 
-    reg_strengths = [0.0, 0.001, 0.01, 0.05, 0.1, 0.5]
+    **Finding**: Moderate regularization (0.01-0.05) helps prevent overfitting and improves test performance.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np, plt, train_model):
+    reg_strengths = [0.0, 0.001, 0.01, 0.05, 0.1, 0.5, 0.9, 1]
     reg_train_losses = []
     reg_test_losses = []
 
     for _reg in reg_strengths:
         _train_loss, _test_loss = train_model(
-            [], [], 3, iterations=200, reg_strength=_reg
+            3, iterations=200, reg_strength=_reg
         )
         reg_train_losses.append(_train_loss[-1])
         reg_test_losses.append(_test_loss)
@@ -400,13 +403,21 @@ def _(mo, np, plt, train_model):
 
     plt.tight_layout()
     plt.show()
-    return reg_strengths, reg_test_losses, reg_train_losses
+    return
 
 
 @app.cell(hide_code=True)
-def _(mo, np, plt, train_model):
-    mo.md("## 4. Training Iterations Analysis")
+def _(mo):
+    mo.md("""
+    ## 4. Training Iterations Analysis
 
+    **Finding**: More iterations improve performance up to a point, with most gains achieved within the first few hundred iterations.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np, plt, train_model):
     iteration_counts = [10, 50, 100, 200, 500, 1000]
     _colors = plt.cm.viridis(np.linspace(0, 1, len(iteration_counts)))
 
@@ -416,7 +427,7 @@ def _(mo, np, plt, train_model):
     iter_test_losses = []
 
     for _i, _iters in enumerate(iteration_counts):
-        _train_loss, _test_loss = train_model([], [], 3, iterations=_iters)
+        _train_loss, _test_loss = train_model(3, iterations=_iters)
         iter_train_losses.append(_train_loss[-1])
         iter_test_losses.append(_test_loss)
 
@@ -468,20 +479,28 @@ def _(mo, np, plt, train_model):
 
     plt.tight_layout()
     plt.show()
-    return iteration_counts, iter_test_losses, iter_train_losses
+    return
 
 
 @app.cell(hide_code=True)
-def _(mo, np, plt, train_model):
-    mo.md("## 5. Train/Test Split Analysis")
+def _(mo):
+    mo.md("""
+    ## 5. Train/Test Split Analysis
 
+    **Finding**: A 80/20 or 70/30 split typically provides a good balance between having enough training data and reliable test metrics.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(np, plt, train_model):
     split_ratios = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
     split_train_losses = []
     split_test_losses = []
 
     for _split in split_ratios:
         _train_loss, _test_loss = train_model(
-            [], [], 3, iterations=200, test_split=_split
+            3, iterations=200, test_split=_split
         )
         split_train_losses.append(_train_loss[-1])
         split_test_losses.append(_test_loss)
@@ -545,28 +564,6 @@ def _(mo, np, plt, train_model):
 
     plt.tight_layout()
     plt.show()
-    return split_ratios, split_test_losses, split_train_losses
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## Summary
-
-    This analysis reveals several key insights about n-gram language models:
-
-    1. **N-gram Size**: Larger n-grams (looking at more context) generally achieve lower loss, but with diminishing returns after 4-5 characters.
-
-    2. **Loss Function**: Cross-entropy loss often provides more stable training and can achieve comparable or better results.
-
-    3. **Regularization**: Moderate regularization (0.01-0.05) helps prevent overfitting and improves test performance.
-
-    4. **Training Iterations**: More iterations improve performance up to a point, with most gains achieved within the first few hundred iterations.
-
-    5. **Train/Test Split**: A 80/20 or 70/30 split typically provides a good balance between having enough training data and reliable test metrics.
-
-    These visualizations help understand the trade-offs between different hyperparameters and can guide model selection for specific use cases.
-    """)
     return
 
 

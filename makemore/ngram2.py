@@ -25,7 +25,7 @@ def _():
 
         Disclaimer: This was originally intended to be an interactive application to run in your browser. But due to limitations involving running torch in WASM, this has become a static notebook. I used Claude to rewrite the interactive code into a linear static notebook. The original interactive notebook can be found here: https://github.com/nelmaliki/machine-learning-notes/blob/main/makemore/ngram.py
 
-        Based on [Andrej Karpathy's makemore video](https://www.youtube.com/watch?v=PaCmpygFfXo&t=382s)
+        Based on [Andrej Karpathy's makemore pt 1 video](https://www.youtube.com/watch?v=PaCmpygFfXo&t=382s)
         """
     )
     return (mo,)
